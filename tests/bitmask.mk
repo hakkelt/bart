@@ -11,10 +11,10 @@ tests/test-bitmask: bitmask
 
 tests/test-bitmask-reverse: bitmask
 	set -e					 							;\
-	[ -z `$(TOOLDIR)/bitmask -b 0 | tr -d '\n'` ]	 						&&\
-	[ "0 " = "`$(TOOLDIR)/bitmask -b 1 | tr -d '\n'`" ]						&&\
-	[ "0 1 4 5 9 10 " == "`$(TOOLDIR)/bitmask -b 1587 | tr -d '\n'`" ] 				&&\
-	[ "0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 " == "`$(TOOLDIR)/bitmask -b 65535 | tr -d '\n'`" ]	&&\
+	[ -z `$(TOOLDIR)/bitmask -b 0 | sed 's/[[:space:]]$$//g'` ]	 						&&\
+	[ "0" = "`$(TOOLDIR)/bitmask -b 1 | sed 's/[[:space:]]$$//g'`" ]						&&\
+	[ "0 1 4 5 9 10" == "`$(TOOLDIR)/bitmask -b 1587 | sed 's/[[:space:]]$$//g'`" ] 				&&\
+	[ "0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15" == "`$(TOOLDIR)/bitmask -b 65535 | sed 's/[[:space:]]$$//g'`" ]	&&\
 	true
 	touch $@
 

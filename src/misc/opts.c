@@ -29,6 +29,10 @@
 
 #include "opts.h"
 
+#ifdef _WIN32
+#include "win/getsubopt.h"
+#endif
+
 list_t str_list = NULL;
 
 void opt_free_strdup(void)

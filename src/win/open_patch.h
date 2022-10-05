@@ -9,8 +9,8 @@
 #ifndef OPEN_PATCH_H
 #define OPEN_PATCH_H
 
-#include <share.h>
+#define open(pathname, flags, ...) open_patched(pathname, flags __VA_OPT__(,) __VA_ARGS__)
 
-#define open(pathname, flags, ...) _sopen(pathname, flags|_O_BINARY, _SH_DENYNO __VA_OPT__(,) __VA_ARGS__)
+int open_patched(const char*, int, ...);
 
 #endif /* OPEN_PATCH_H */
