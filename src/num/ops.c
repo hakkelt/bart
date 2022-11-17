@@ -627,12 +627,19 @@ void operator_generic_apply_parallel_unchecked(int D, const struct operator_s* o
 		int max_threads = omp_get_max_threads();
 		omp_set_num_threads(num_threads);
 
+		struct cuda_threads_s* gpu_stat = gpu_threads_create(NULL);
+
 		#pragma omp parallel
 		{
+			gpu_threads_enter(gpu_stat);
+
 			for (int i = omp_get_thread_num(); i < D; i += omp_get_num_threads())
 				operator_generic_apply_unchecked(op[i], N, args[i]);
-	
+
+			gpu_threads_leave(gpu_stat);
 		}
+
+		gpu_threads_free(gpu_stat);
 
 		omp_set_num_threads(max_threads);
 	
@@ -896,12 +903,18 @@ static void op_loop_fun(const operator_data_t* _data, unsigned int N, void* args
 	bool ap_save = num_auto_parallelize;
 	num_auto_parallelize = false;
 
+	struct cuda_threads_s* gpu_stat = gpu_threads_create(NULL);
+
 	NESTED(void, op_loop_nary, (void* ptr[]))
 	{
+		gpu_threads_enter(gpu_stat);
 		operator_generic_apply_unchecked(data->op, data->N, ptr);
+		gpu_threads_leave(gpu_stat);
 	};
 
 	md_parallel_nary(N, data->D, data->dims0, data->parallel, data->strs, args, op_loop_nary);
+
+	gpu_threads_free(gpu_stat);
 
 	num_auto_parallelize = ap_save;
 }
@@ -919,7 +932,7 @@ static void merge_dims(unsigned int D, long odims[D], const long idims1[D], cons
 	}
 }
 
-const struct operator_s* (operator_loop_parallel2)(unsigned int N, const unsigned int D,
+const struct operator_s* operator_loop_parallel2(unsigned int N, unsigned int D,
 				const long dims[D], const long (*strs)[D],
 				const struct operator_s* op,
 				unsigned int flags, bool gpu)
@@ -937,13 +950,13 @@ const struct operator_s* (operator_loop_parallel2)(unsigned int N, const unsigne
 
 	// TODO: we should have a flag and ignore args with flag
 
-	for (unsigned int i = 0; i < N; i++) {
+	for (int i = 0; i < (int)N; i++) {
 
 		const struct iovec_s* io = operator_arg_domain(op, i);
 
-		assert(D == io->N);
+		assert((int)D == io->N);
 
-		for (unsigned int j = 0; j < D; j++) {
+		for (int j = 0; j < (int)D; j++) {
 
 			assert((0 == io->strs[j]) || (io->strs[j] == strs[i][j]));
 			assert((1 == io->dims[j]) == (0 == io->strs[j]));
@@ -1092,7 +1105,7 @@ const struct operator_s* operator_copy_wrapper_sameplace(unsigned int N, const l
 	const long* dims[N];
 	const long* (*strs2)[N] = TYPE_ALLOC(const long*[N]);
 
-	for (unsigned int i = 0; i < N; i++) {
+	for (int i = 0; i < (int)N; i++) {
 
 		const struct iovec_s* io = operator_arg_domain(op, i);
 
@@ -1108,7 +1121,7 @@ const struct operator_s* operator_copy_wrapper_sameplace(unsigned int N, const l
 		long tstrs[io->N];
 		md_calc_strides(io->N, tstrs, io->dims, CFL_SIZE);
 
-		for (unsigned int i = 0; i < io->N; i++)
+		for (int i = 0; i < io->N; i++)
 			if (1 != io->dims[i])
 				assert(io->strs[i] == tstrs[i]);
 	}
@@ -1143,7 +1156,7 @@ static DEF_TYPEID(gpu_data_s);
 #if defined(USE_CUDA) && defined(_OPENMP)
 #include <omp.h>
 #define MAX_CUDA_DEVICES 16
-omp_lock_t gpulock[MAX_CUDA_DEVICES];
+omp_nest_lock_t gpulock[MAX_CUDA_DEVICES];
 #endif
 
 
@@ -1179,9 +1192,9 @@ static void gpuwrp_fun(const operator_data_t* _data, unsigned int N, void* args[
 			gpu_ptr[i] = md_gpu_move(io->N, io->dims, args[i], io->size);
 	}
 
-	omp_set_lock(&gpulock[gpun]);
+	omp_set_nest_lock(&gpulock[gpun]);
 	operator_generic_apply_unchecked(op, N, gpu_ptr);
-	omp_unset_lock(&gpulock[gpun]);
+	omp_unset_nest_lock(&gpulock[gpun]);
 
 	for (unsigned int i = 0; i < N; i++) {
 
@@ -2380,6 +2393,7 @@ list_t operator_get_list(const struct operator_s* op) {
 	auto data_perm = CAST_MAYBE(permute_data_s, op->data);
 	auto data_plus = CAST_MAYBE(operator_plus_s, op->data);
 	auto data_copy = CAST_MAYBE(copy_data_s, op->data);
+	auto data_attach = CAST_MAYBE(attach_data_s, op->data);
 
 	if (NULL != data_combi) {
 
@@ -2432,6 +2446,11 @@ list_t operator_get_list(const struct operator_s* op) {
 	if (NULL != data_copy) {
 
 		return operator_get_list(data_copy->op);
+	}
+
+	if (NULL != data_attach) {
+
+		return operator_get_list(data_attach->op);
 	}
 
 	list_t result = list_create();

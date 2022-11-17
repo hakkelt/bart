@@ -19,6 +19,11 @@
 #include "misc/nested.h"
 #include "misc/misc.h"
 
+#ifdef USE_CUDA
+#include "num/gpuops.h"
+#include "noncart/gpu_grid.h"
+#endif
+
 #include "grid.h"
 
 
@@ -32,7 +37,7 @@ static double kb(double beta, double x)
         return bessel_i0(beta * sqrt(1. - pow(2. * x, 2.))) / bessel_i0(beta);
 }
 
-static void kb_precompute(double beta, int n, float table[n + 1])
+void kb_precompute(double beta, int n, float table[n + 1])
 {
 	for (int i = 0; i < n + 1; i++)
 		table[i] = kb(beta, (double)(i) / (double)(n - 1) / 2.);
@@ -87,6 +92,20 @@ static float kb_beta = -1.;
 
 void gridH(const struct grid_conf_s* conf, const complex float* traj, const long ksp_dims[4], complex float* dst, const long grid_dims[4], const complex float* grid)
 {
+
+	if (grid_dims[3] != ksp_dims[3])
+		error("Adjoint gridding: ksp and grid are incompatible in dim 3 (%d != %d)!\n", ksp_dims[3], grid_dims[3]);
+
+#ifdef USE_CUDA
+	if (cuda_ondevice(traj)) {
+
+		long trj_dims[4] = { 3, ksp_dims[1], ksp_dims[2], 1 };
+		cuda_gridH(conf, 4, trj_dims, traj, ksp_dims, dst, grid_dims, grid);
+		
+		return;
+	}
+#endif
+
 	long C = ksp_dims[3];
 
 	// precompute kaiser bessel table
@@ -106,9 +125,9 @@ void gridH(const struct grid_conf_s* conf, const complex float* traj, const long
 	for(int i = 0; i < samples; i++) {
 
 		float pos[3];
-		pos[0] = conf->os * (creal(traj[i * 3 + 0]));
-		pos[1] = conf->os * (creal(traj[i * 3 + 1]));
-		pos[2] = conf->os * (creal(traj[i * 3 + 2]));
+		pos[0] = conf->os * (creal(traj[i * 3 + 0]) + conf->shift[0]);
+		pos[1] = conf->os * (creal(traj[i * 3 + 1]) + conf->shift[1]);
+		pos[2] = conf->os * (creal(traj[i * 3 + 2]) + conf->shift[2]);
 
 		pos[0] += (grid_dims[0] > 1) ? ((float)grid_dims[0] / 2.) : 0.;
 		pos[1] += (grid_dims[1] > 1) ? ((float)grid_dims[1] / 2.) : 0.;
@@ -128,6 +147,20 @@ void gridH(const struct grid_conf_s* conf, const complex float* traj, const long
 
 void grid(const struct grid_conf_s* conf, const complex float* traj, const long grid_dims[4], complex float* grid, const long ksp_dims[4], const complex float* src)
 {
+
+	if (grid_dims[3] != ksp_dims[3])
+		error("Gridding: ksp and grid are incompatible in dim 3 (%d != %d)!\n", ksp_dims[3], grid_dims[3]);
+
+#ifdef USE_CUDA
+	if (cuda_ondevice(traj)) {
+
+		long trj_dims[4] = { 3, ksp_dims[1], ksp_dims[2], 1 };
+		cuda_grid(conf, 4, trj_dims, traj, grid_dims, grid, ksp_dims, src);
+		
+		return;
+	}
+#endif
+
 	long C = ksp_dims[3];
 
 	// precompute kaiser bessel table
@@ -148,9 +181,9 @@ void grid(const struct grid_conf_s* conf, const complex float* traj, const long 
 	for(int i = 0; i < samples; i++) {
 
 		float pos[3];
-		pos[0] = conf->os * (creal(traj[i * 3 + 0]));
-		pos[1] = conf->os * (creal(traj[i * 3 + 1]));
-		pos[2] = conf->os * (creal(traj[i * 3 + 2]));
+		pos[0] = conf->os * (creal(traj[i * 3 + 0]) + conf->shift[0]);
+		pos[1] = conf->os * (creal(traj[i * 3 + 1]) + conf->shift[1]);
+		pos[2] = conf->os * (creal(traj[i * 3 + 2]) + conf->shift[2]);
 
 		pos[0] += (grid_dims[0] > 1) ? ((float) grid_dims[0] / 2.) : 0.;
 		pos[1] += (grid_dims[1] > 1) ? ((float) grid_dims[1] / 2.) : 0.;
@@ -158,10 +191,15 @@ void grid(const struct grid_conf_s* conf, const complex float* traj, const long 
 
 		complex float val[C];
 		
-		for (int j = 0; j < C; j++)
-			val[j] = src[j * samples + i];
+		bool skip = true;
+		for (int j = 0; j < C; j++) {
 
-		grid_point(C, 3, grid_dims, pos, grid, val, conf->periodic, conf->width, kb_size, kb_table);
+			val[j] = src[j * samples + i];
+			skip = skip && (0. == val[j]);
+		}
+			
+		if (!skip)
+			grid_point(C, 3, grid_dims, pos, grid, val, conf->periodic, conf->width, kb_size, kb_table);			
 	}
 }
 
@@ -192,18 +230,28 @@ void grid2(const struct grid_conf_s* conf, unsigned int D, const long trj_dims[D
 	long grid_strs[D];
 	md_calc_strides(D, grid_strs, grid_dims, CFL_SIZE);
 
+	const long* ptr_grid_dims = &(grid_dims[0]);
+	const long* ptr_ksp_dims = &(ksp_dims[0]);
 
-	long pos[D];
-	for (unsigned int i = 0; i < D; i++)
-		pos[i] = 0;
+	NESTED(void, nary_grid, (void* ptr[]))
+	{
+		const complex float* _trj = ptr[0];
+		complex float* _dst = ptr[1];
+		const complex float* _src = ptr[2];
 
-	do {
+		grid(conf, _trj, ptr_grid_dims, _dst, ptr_ksp_dims, _src);
+	};
 
-		grid(conf, &MD_ACCESS(D, trj_strs, pos, traj),
-			grid_dims, &MD_ACCESS(D, grid_strs, pos, dst),
-			ksp_dims, &MD_ACCESS(D, ksp_strs, pos, src));
+	const long* strs[3] = { trj_strs + 4, grid_strs + 4, ksp_strs + 4 };
+	void* ptr[3] = { (void*)traj, (void*)dst, (void*)src };
+	unsigned long pflags = md_nontriv_dims(D - 4, grid_dims + 4);
 
-	} while(md_next(D, ksp_dims, (~0 ^ 15), pos));
+#ifdef USE_CUDA
+	if (cuda_ondevice(traj))
+		pflags = 0;
+#endif
+
+	md_parallel_nary(3, D - 4, ksp_dims + 4, pflags, strs, ptr, nary_grid);
 }
 
 
@@ -366,6 +414,36 @@ void rolloff_correction(float os, float width, float beta, const long dimensions
 					* rolloff(os * pos(dimensions[1], y), beta, width)
 					* rolloff(os * pos(dimensions[2], z), beta, width);
 }
+
+void apply_rolloff_correction(float os, float width, float beta, int N, const long dims[N], complex float* dst, const complex float* src)
+{
+#ifdef USE_CUDA
+	assert(cuda_ondevice(dst) == cuda_ondevice(src));
+	if (cuda_ondevice(dst)) {
+
+		cuda_apply_rolloff_correction(os, width, beta, N, dims, dst, src);
+		return;
+	}
+#endif
+	long size_img = md_calc_size(3, dims);
+	long size_bat = md_calc_size(N - 3, dims + 3);
+
+	#pragma omp parallel for collapse(3)
+	for (int z = 0; z < dims[2]; z++) 
+		for (int y = 0; y < dims[1]; y++) 
+			for (int x = 0; x < dims[0]; x++) {
+
+				long idx = x + dims[0] * (y + z * dims[1]);
+
+				float val = rolloff(os * pos(dims[0], x), beta, width)
+					  * rolloff(os * pos(dims[1], y), beta, width)
+					  * rolloff(os * pos(dims[2], z), beta, width);
+
+				for (long i = 0; i < size_bat; i++)
+					dst[idx + i *size_img] = val * src[idx + i *size_img];
+			}
+}
+
 
 
 

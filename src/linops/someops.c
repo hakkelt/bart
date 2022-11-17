@@ -317,32 +317,6 @@ struct linop_s* linop_zreal_create(unsigned int N, const long dims[N])
 
 
 
-struct identity_data_s {
-
-	INTERFACE(linop_data_t);
-
-	const struct iovec_s* domain;
-};
-
-static DEF_TYPEID(identity_data_s);
-
-static void identity_apply(const linop_data_t* _data, complex float* dst, const complex float* src)
-{
-	const auto data = CAST_DOWN(identity_data_s, _data);
-	const struct iovec_s* domain = data->domain;
-
-	md_copy2(domain->N, domain->dims, domain->strs, dst, domain->strs, src, CFL_SIZE);
-}
-
-static void identity_free(const linop_data_t* _data)
-{
-	const auto data = CAST_DOWN(identity_data_s, _data);
-
-	iovec_free(data->domain);
-
-	xfree(data);
-}
-
 /**
  * Create an Identity linear operator: I x
  * @param N number of dimensions
@@ -350,12 +324,16 @@ static void identity_free(const linop_data_t* _data)
  */
 struct linop_s* linop_identity_create(unsigned int N, const long dims[N])
 {
-	PTR_ALLOC(struct identity_data_s, data);
-	SET_TYPEID(identity_data_s, data);
+	auto op = operator_identity_create(N, dims);
+	auto result = linop_from_ops(op, op, op, NULL);
+	operator_free(op);
 
-	data->domain = iovec_create(N, dims, CFL_SIZE);
+	return result;
+}
 
-	return linop_create(N, dims, N, dims, CAST_UP(PTR_PASS(data)), identity_apply, identity_apply, identity_apply, NULL, identity_free);
+bool linop_is_identity(const struct linop_s* lop)
+{
+	return check_simple_copy(lop->forward);
 }
 
 
@@ -996,6 +974,56 @@ struct linop_s* linop_transpose_create(int N, int a, int b, const long dims[N])
 
 
 
+
+
+
+struct flip_op_s {
+
+	INTERFACE(linop_data_t);
+
+	int N;
+	unsigned long flags;
+	const long* dims;
+};
+
+static DEF_TYPEID(flip_op_s);
+
+static void flip_forward(const linop_data_t* _data, complex float* dst, const complex float* src)
+{
+	auto data = CAST_DOWN(flip_op_s, _data);
+	md_flip(data->N, data->dims, data->flags, dst, src, CFL_SIZE);
+}
+
+static void flip_normal(const linop_data_t* _data, complex float* dst, const complex float* src)
+{
+	auto data = CAST_DOWN(flip_op_s, _data);
+
+	md_copy(data->N, data->dims, dst, src, CFL_SIZE);
+}
+
+static void flip_free(const linop_data_t* _data)
+{
+	auto data = CAST_DOWN(flip_op_s, _data);
+
+	xfree(data->dims);
+	xfree(data);
+}
+
+
+struct linop_s* linop_flip_create(int N, const long dims[N], unsigned long flags)
+{
+	PTR_ALLOC(struct flip_op_s, data);
+	SET_TYPEID(flip_op_s, data);
+
+	data->N = N;
+	data->flags = flags;
+
+	long* ndims = *TYPE_ALLOC(long[N]);
+	md_copy_dims(N, ndims, dims);
+	data->dims = ndims;
+
+	return linop_create(N, dims, N, dims, CAST_UP(PTR_PASS(data)), flip_forward, flip_forward, flip_normal, NULL, flip_free);
+}
 
 
 

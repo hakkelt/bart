@@ -58,6 +58,7 @@ struct network_unet_s network_unet_default_reco = {
 	.INTERFACE.norm_batch_flag = MD_BIT(4),
 
 	.INTERFACE.debug = false,
+	.INTERFACE.bart_to_channel_first = true,
 
 	.INTERFACE.prefix = NULL,
 
@@ -115,6 +116,7 @@ struct network_unet_s network_unet_default_segm = {
 	.INTERFACE.low_mem = false,
 
 	.INTERFACE.debug = false,
+	.INTERFACE.bart_to_channel_first = false,
 
 	.N = 5,
 
@@ -831,12 +833,6 @@ nn_t network_unet_create(const struct network_s* _unet, unsigned int NO, const l
 	}
 
 	auto result = unet_level_create(unet, N, odims, idims, 0, status);
-
-	if (unet->INTERFACE.residual) {
-
-		result = nn_chain2_FF(result, 0, NULL, nn_from_nlop_F(nlop_zaxpbz_create(N, idims, 1., -1.)), 1, NULL);
-		result = nn_dup_F(result, 0, NULL, 1, NULL);
-	}
 
 	result = unet_sort_names(result, unet);
 

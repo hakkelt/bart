@@ -435,8 +435,7 @@ static enum adc_return siemens_adc_read(bool vd, int fd, bool linectr, bool part
 
 			if (0 == pos[COIL_DIM]) {
 
-				// TODO: rethink this
-				pos[PHS1_DIM]	= mdh.sLC[0] + (linectr ? mdh.linectr : 0);
+				pos[PHS1_DIM]	= mdh.sLC[0] - (linectr ? mdh.linectr - dims[PHS1_DIM] / 2 : 0);
 				pos[AVG_DIM]	= mdh.sLC[1];
 				if (radial) { // reorder for radial
 
@@ -444,7 +443,7 @@ static enum adc_return siemens_adc_read(bool vd, int fd, bool linectr, bool part
 				} else {
 
 					pos[SLICE_DIM]	= mdh.sLC[2];
-					pos[PHS2_DIM]	= mdh.sLC[3] + (partctr ? mdh.partctr : 0);
+					pos[PHS2_DIM]	= mdh.sLC[3] - (partctr ? mdh.partctr - dims[PHS2_DIM] / 2 : 0);
 				}
 				pos[TE_DIM]	= mdh.sLC[4];
 				pos[COEFF_DIM]	= mdh.sLC[5];
@@ -497,6 +496,7 @@ int main_twixread(int argc, char* argv[argc])
 	bool linectr = false;
 	bool partctr = false;
 	bool mpi = false;
+	bool check_read = true;
 
 	long dims[DIMS];
 	md_singleton_dims(DIMS, dims);
@@ -511,11 +511,15 @@ int main_twixread(int argc, char* argv[argc])
 		OPT_LONG('v', &(dims[AVG_DIM]), "V", "number of averages"),
 		OPT_LONG('c', &(dims[COIL_DIM]), "C", "number of channels"),
 		OPT_LONG('n', &(dims[TIME_DIM]), "N", "number of repetitions"),
+		OPT_LONG('p', &(dims[COEFF_DIM]), "P", "number of cardiac phases"),
+		OPT_LONG('f', &(dims[TIME2_DIM]), "F", "number of flow encodings"),
+		OPT_LONG('i', &(dims[LEVEL_DIM]), "I", "number inversion experiments"),
 		OPT_LONG('a', &adcs, "A", "total number of ADCs"),
 		OPT_SET('A', &autoc, "automatic [guess dimensions]"),
 		OPT_SET('L', &linectr, "use linectr offset"),
 		OPT_SET('P', &partctr, "use partctr offset"),
 		OPT_SET('M', &mpi, "MPI mode"),
+		OPT_CLEAR('X', &check_read, "no consistency check for number of read acquisitions"),
 		OPT_INT('d', &debug_level, "level", "Debug level"),
 	};
 
@@ -529,7 +533,7 @@ int main_twixread(int argc, char* argv[argc])
 	}
 
 	if (0 == adcs)
-		adcs = dims[PHS1_DIM] * dims[PHS2_DIM] * dims[SLICE_DIM] * dims[TIME_DIM];
+		adcs = dims[PHS1_DIM] * dims[PHS2_DIM] * dims[SLICE_DIM] * dims[TIME_DIM] * dims[TIME2_DIM] * dims[LEVEL_DIM] * dims[COEFF_DIM];
 
 	debug_print_dims(DP_DEBUG1, DIMS, dims);
 
@@ -667,7 +671,7 @@ int main_twixread(int argc, char* argv[argc])
 
 	}
 
-	if (0 != adcs)
+	if ((0 != adcs) && check_read)
 		error("Incorrect number of ADCs read! ADC count difference: %d != 0!\n", adcs);
 	md_free(buf);
 

@@ -672,7 +672,7 @@ struct linop_s* linop_stack(int D, int E, const struct linop_s* a, const struct 
 	PTR_ALLOC(struct linop_s, c);
 
 	c->forward = operator_stack(D, E, a->forward, b->forward);
-	c->adjoint = operator_stack(E, D, b->adjoint, a->adjoint);
+	c->adjoint = operator_stack(E, D, a->adjoint, b->adjoint);
 
 	const struct operator_s* an = a->normal;
 
@@ -701,22 +701,199 @@ struct linop_s* linop_stack_FF(int D, int E, const struct linop_s* a, const stru
 	return result;
 }
 
+struct stack_op_s {
 
+	INTERFACE(linop_data_t);
 
+	int N;
+	const struct linop_s** lops;
+	long* offset;
 
+	int D;
+	const long* dims;
+};
 
+static DEF_TYPEID(stack_op_s);
 
-
-struct linop_s* linop_loop(unsigned int D, const long dims[D], struct linop_s* op)
+static void stack_cod_forward(const linop_data_t* _data, complex float* dst, const complex float* src)
 {
+	const auto d = CAST_DOWN(stack_op_s, _data);
+
+	for (int i = 0; i < d->N; i++)
+		linop_forward_unchecked(d->lops[i], dst + d->offset[i], src);
+}
+
+static void stack_cod_adjoint(const linop_data_t* _data, complex float* dst, const complex float* src)
+{
+	const auto d = CAST_DOWN(stack_op_s, _data);
+
+	md_clear(d->D, d->dims, dst, CFL_SIZE);
+
+	complex float* tmp = md_alloc_sameplace(d->D, d->dims, CFL_SIZE, dst);
+
+	for (int i = 0; i < d->N; i++) {
+		
+		linop_adjoint_unchecked(d->lops[i], tmp, src + d->offset[i]);		
+		md_zadd(d->D, d->dims, dst, dst, tmp);
+	}
+
+	md_free(tmp);
+}
+
+static void stack_cod_normal(const linop_data_t* _data, complex float* dst, const complex float* src)
+{
+	const auto d = CAST_DOWN(stack_op_s, _data);
+
+	linop_normal_unchecked(d->lops[0], dst, src);
+
+	complex float* tmp = md_alloc_sameplace(d->D, d->dims, CFL_SIZE, dst);
+
+	for (int i = 1; i < d->N; i++) {
+
+		linop_normal_unchecked(d->lops[i], tmp, src);
+		md_zadd(d->D, d->dims, dst, dst, tmp);
+	}
+
+	md_free(tmp);
+}
+
+static void stack_cod_free(const linop_data_t* _data)
+{
+	const auto d = CAST_DOWN(stack_op_s, _data);
+
+	for (int i = 0; i < d->N; i++)
+		linop_free(d->lops[i]);
+
+	xfree(d->offset);
+	xfree(d->dims);
+
+	xfree(d->lops);
+
+	xfree(d);
+}
+
+
+struct linop_s* linop_stack_cod(int N, struct linop_s* lops[N], int stack_dim)
+{
+	PTR_ALLOC(struct stack_op_s, data);
+	SET_TYPEID(stack_op_s, data);
+
+	int NI = linop_domain(lops[0])->N;
+	int NO = linop_codomain(lops[0])->N;
+
+	long odims[NO];
+	long idims[NI];
+
+	md_copy_dims(NO, odims, linop_codomain(lops[0])->dims);
+	md_copy_dims(NI, idims, linop_domain(lops[0])->dims);
+
+	long offset[N];
+	offset[0] = 0;
+
+
+	for (int i = 1; i < N; i++) {
+
+		assert(NI == linop_domain(lops[i])->N);
+		assert(NO == linop_codomain(lops[i])->N);
+		assert(md_check_equal_dims(NI, idims, linop_domain(lops[i])->dims, ~0));
+		assert(md_check_equal_dims(NO, odims, linop_codomain(lops[i])->dims, ~MD_BIT(stack_dim)));
+
+		offset[i] = odims[stack_dim] * md_calc_size(stack_dim, odims);
+		odims[stack_dim] += linop_codomain(lops[i])->dims[stack_dim];
+	}
+
+	long istrs[NI];
+	long ostrs[NO];
+
+	md_calc_strides(NI, istrs, idims, CFL_SIZE);
+	md_calc_strides(NO, ostrs, odims, CFL_SIZE);
+
+	data->lops = *TYPE_ALLOC(const struct linop_s*[N]);
+
+	for (int i = 0; i < N; i++)
+		data->lops[i] = linop_copy_wrapper2(NI, istrs, NO, ostrs, lops[i]);
+
+	data->offset = ARR_CLONE(long[N], offset);
+	data->dims = ARR_CLONE(long[NI], idims);
+
+	data->D = NI;
+	data->N = N;
+
+	return linop_create(NO, odims, NI, idims, CAST_UP(PTR_PASS(data)), stack_cod_forward, stack_cod_adjoint, stack_cod_normal, NULL, stack_cod_free);
+}
+
+
+struct linop_s* linop_stack_cod_F(int N, struct linop_s* lops[N], int stack_dim)
+{
+	auto ret = linop_stack_cod(N, lops, stack_dim);
+	
+	for (int i = 0; i < N; i++)
+		linop_free(lops[i]);
+
+	return ret;
+}
+
+
+
+
+static void merge_dims(int D, long odims[D], const long idims1[D], const long idims2[D])
+{
+	md_copy_dims(D, odims, idims1);
+
+	for (int i = 0; i < D; i++) {
+
+		assert((1 == odims[i]) || (1 == idims2[i]));
+
+		if (1 == odims[i])
+			odims[i] = idims2[i];
+	}
+}
+
+
+struct linop_s* linop_loop(int D, const long dims[D], struct linop_s* op)
+{
+	assert(D == linop_codomain(op)->N);
+	assert(D == linop_domain(op)->N);
+
+	long odims[D];
+	long idims[D];
+
+	long ostrs[D];
+	long istrs[D];
+
+	merge_dims(D, odims, dims, linop_codomain(op)->dims);
+	merge_dims(D, idims, dims, linop_domain(op)->dims);
+
+	md_calc_strides(D, ostrs, odims, linop_codomain(op)->size);
+	md_calc_strides(D, istrs, idims, linop_domain(op)->size);
+
+	for (int i = 0; i < D; i++) {
+
+		ostrs[i] = (1 == linop_codomain(op)->dims[i]) ? 0 : ostrs[i];
+		istrs[i] = (1 == linop_domain(op)->dims[i]) ? 0 : istrs[i];
+	}
+
+	auto lop_wrap = linop_copy_wrapper(D, istrs, ostrs, op);
+
 	PTR_ALLOC(struct linop_s, op2);
 
-	op2->forward = operator_loop(D, dims, op->forward);
-	op2->adjoint = operator_loop(D, dims, op->adjoint);
-	op2->normal = (NULL == op->normal) ? NULL : operator_loop(D, dims, op->normal);
+	op2->forward = operator_loop(D, dims, lop_wrap->forward);
+	op2->adjoint = operator_loop(D, dims, lop_wrap->adjoint);
+	op2->normal = (NULL == op->normal) ? NULL : operator_loop(D, dims, lop_wrap->normal);
 	op2->norm_inv = NULL; // FIXME
 
+	linop_free(lop_wrap);
+
 	return PTR_PASS(op2);
+}
+
+struct linop_s* linop_loop_F(int D, const long dims[D], struct linop_s* op)
+{
+	auto result = linop_loop(D, dims, op);
+	
+	linop_free(op);
+	
+	return result;
 }
 
 struct linop_s* linop_copy_wrapper2(int DI, const long istrs[DI], int DO, const long ostrs[DO],  struct linop_s* op)

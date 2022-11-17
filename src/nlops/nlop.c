@@ -27,6 +27,7 @@
 #include "misc/graph.h"
 
 #include "nlops/stack.h"
+#include "nlops/chain.h"
 #include "nlop.h"
 
 
@@ -465,6 +466,53 @@ struct nlop_s* nlop_clone(const struct nlop_s* op)
 	return PTR_PASS(n);
 }
 
+static const struct operator_s* graph_optimize_operator(const struct operator_s* op)
+{
+	if (NULL == op)
+		return NULL;
+
+	auto graph = operator_get_graph(op);
+
+	int count1;
+	int count2 = list_count(graph->nodes);
+
+	do {
+		count1 = count2;
+
+		graph = operator_graph_optimize_identity_F(graph);
+		graph = operator_graph_optimize_identify_F(graph);
+		count2 = list_count(graph->nodes);
+
+	} while(count1 > count2);
+
+	return graph_to_operator_F(graph);
+}
+
+
+
+const struct nlop_s* nlop_optimize_graph(const struct nlop_s* op)
+{
+	PTR_ALLOC(struct nlop_s, n);
+
+	int II = nlop_get_nr_in_args(op);
+	int OO = nlop_get_nr_out_args(op);
+
+	n->op = graph_optimize_operator(op->op);
+
+	const struct linop_s* (*der)[II][OO] = (void*)op->derivative;
+
+	PTR_ALLOC(const struct linop_s*[II][OO], nder);
+
+	for (int i = 0; i < II; i++)
+		for (int o = 0; o < OO; o++)
+			(*nder)[i][o] = graph_optimize_linop((*der)[i][o]);
+
+	n->derivative = &(*PTR_PASS(nder))[0][0];
+
+	nlop_free(op);
+	
+	return PTR_PASS(n);
+}
 
 
 nlop_data_t* nlop_get_data(const struct nlop_s* op)
@@ -759,12 +807,18 @@ static void flatten_der(const nlop_data_t* _data, unsigned int o, unsigned int i
 
 			auto iov2 = linop_domain(der);
 
+			complex float* tmp = (0 == i) ? (void*)dst + data->off[o] : md_alloc_sameplace(iov->N, iov->dims, iov->size, src);
+
 			linop_forward(der,
 				iov->N, iov->dims, tmp,
 				iov2->N, iov2->dims,
 				(void*)src + data->off[OO + i]);
+			
+			if (0 != i) {
 
-			md_zadd(iov->N, iov->dims, (void*)dst + data->off[o], (void*)dst + data->off[o], tmp);
+				md_zadd(iov->N, iov->dims, (void*)dst + data->off[o], (void*)dst + data->off[o], tmp);
+				md_free(tmp);
+			}
 		}
 
 		md_free(tmp);
@@ -785,22 +839,22 @@ static void flatten_adj(const nlop_data_t* _data, unsigned int o, unsigned int i
 
 		auto iov = linop_domain(nlop_get_derivative(data->op, 0, i));
 
-		complex float* tmp = md_alloc_sameplace(iov->N, iov->dims, iov->size, src);
-
-		md_clear(iov->N, iov->dims, (void*)dst + data->off[OO + i], iov->size);
-
 		for (int o = 0; o < OO; o++) {	// FIXME
 
 			const struct linop_s* der = nlop_get_derivative(data->op, o, i);
+
+			complex float* tmp = (0 == o) ? (void*)dst + data->off[OO + i] : md_alloc_sameplace(iov->N, iov->dims, iov->size, src);
 
 			linop_adjoint_unchecked(der,
 				tmp,
 				(void*)src + data->off[o]);
 
-			md_zadd(iov->N, iov->dims, (void*)dst + data->off[OO + i], (void*)dst + data->off[OO + i], tmp);
-		}
+			if (0 != o) {
 
-		md_free(tmp);
+				md_zadd(iov->N, iov->dims, (void*)dst + data->off[OO + i], (void*)dst + data->off[OO + i], tmp);
+				md_free(tmp);
+			}
+		}
 	}
 }
 
@@ -826,6 +880,21 @@ struct nlop_s* nlop_flatten(const struct nlop_s* op)
 
 	int II = nlop_get_nr_in_args(op);
 	int OO = nlop_get_nr_out_args(op);
+
+	if (1 < II) {
+
+		// this uses optimization to apply linops jointly
+
+		op = nlop_clone(op);
+
+		for (int i = 0; i < II; i++)
+			op = nlop_flatten_in_F(op, i);
+
+		for (int i = 1; i < II; i++)
+			op = nlop_stack_inputs_F(op, 0, 1, 0);
+		
+		return nlop_flatten_F(op);
+	}
 
 	long odims[1] = { 0 };
 	long ostrs[] = { CFL_SIZE };

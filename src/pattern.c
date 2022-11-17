@@ -37,18 +37,18 @@ int main_pattern(int argc, char* argv[argc])
 		ARG_OUTFILE(true, &pat_file, "pattern"),
 	};
 
-	unsigned int flags = COIL_FLAG;
+	unsigned long flags = COIL_FLAG;
 
 	const struct opt_s opts[] = {
 
-		OPT_UINT('s', &flags, "bitmask", "Squash dimensions selected by bitmask"),
+		OPT_ULONG('s', &flags, "bitmask", "Squash dimensions selected by bitmask"),
 	};
 
 	cmdline(&argc, argv, ARRAY_SIZE(args), args, help_str, ARRAY_SIZE(opts), opts);
 
 	num_init();
 
-	unsigned int N = DIMS;
+	int N = DIMS;
 	long in_dims[N];
 	long out_dims[N];
 

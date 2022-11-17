@@ -9,8 +9,10 @@
 
 #include "networks/unet.h"
 #include "networks/cnn.h"
+#include "networks/tf.h"
 
 #include "network.h"
+#include "nn/activation.h"
 
 struct network_s* get_default_network(enum NETWORK_SELECT net)
 {
@@ -24,6 +26,8 @@ struct network_s* get_default_network(enum NETWORK_SELECT net)
 			return CAST_UP(&network_resnet_default);
 		case NETWORK_VARNET:
 			return CAST_UP(&network_varnet_default);
+		case NETWORK_TENSORFLOW:
+			return CAST_UP(&network_tensorflow_default);
 	}
 
 	assert(0);
@@ -40,6 +44,8 @@ struct opt_s res_block_opts[] = {
 
 	OPTL_CLEAR(0, "no-batch-normalization", &(network_resnet_default.batch_norm), "do not use batch normalization"),
 	OPTL_CLEAR(0, "no-bias", &(network_resnet_default.bias), "do not use bias"),
+
+	OPTL_SELECT_DEF(0, "cardioid", enum ACTIVATION, &(network_resnet_default.activation), ACT_CARDIOID, ACT_RELU, "use cardioid as activation"),
 };
 const int N_res_block_opts = ARRAY_SIZE(res_block_opts);
 
@@ -111,3 +117,9 @@ struct opt_s unet_segm_opts[] = {
 	OPTL_CLEAR(0, "no-bias", &(network_unet_default_segm.use_bias), "do not use bias"),
 };
 const int N_unet_segm_opts = ARRAY_SIZE(unet_segm_opts);
+
+struct opt_s network_tensorflow_opts[] = {
+
+	OPTL_STRING('p', "tf1-path", &(network_tensorflow_default.model_path), "path", "path to TensorFlow v1 graph"),
+};
+const int N_tensorflow_opts = ARRAY_SIZE(network_tensorflow_opts);

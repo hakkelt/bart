@@ -7,6 +7,8 @@
 extern "C" {
 #endif
 
+#include <stdint.h>
+
 extern void cuda_float2double(long size, double* dst, const float* src);
 extern void cuda_double2float(long size, float* dst, const double* src);
 extern void cuda_sxpay(long size, float* y, float alpha, const float* src);
@@ -56,6 +58,7 @@ extern void cuda_zcmp(long N, _Complex float* dst, const _Complex float* src1, c
 extern void cuda_zdiv_reg(long N, _Complex float* dst, const _Complex float* src1, const _Complex float* src2, _Complex float lambda);
 extern void cuda_le(long N, float* dst, const float* src1, const float* src2);
 extern void cuda_zfftmod(long N, _Complex float* dst, const _Complex float* src, unsigned int n, _Bool inv, double phase);
+extern void cuda_zfftmod_3d(const long dims[3], _Complex float* dst, const _Complex float* src, _Bool inv, double phase);
 extern void cuda_zmax(long N, _Complex float* dst, const _Complex float* src1, const _Complex float* src2);
 extern void cuda_zle(long N, _Complex float* dst, const _Complex float* src1, const _Complex float* src2);
 extern void cuda_smax(long N, float val, float* dst, const float* src1);
@@ -70,6 +73,9 @@ extern void cuda_zcmpl_real(long N, _Complex float* dst, const float* src);
 extern void cuda_zcmpl_imag(long N, _Complex float* dst, const float* src);
 extern void cuda_zcmpl(long N, _Complex float* dst, const float* real_src, const float* imag_src);
 extern void cuda_zfill(long N, _Complex float val, _Complex float* dst);
+
+extern void cuda_compress(long N, uint32_t* dst, const float* src);
+extern void cuda_decompress(long N, float* dst, const uint32_t* src);
 
 extern void cuda_zfmac_strided(long N, long dims[3], unsigned long oflags, unsigned long iflags1, unsigned long iflags2, _Complex float* dst, const _Complex float* src1, const _Complex float* src2);
 extern void cuda_zfmacc_strided(long N, long dims[3], unsigned long oflags, unsigned long iflags1, unsigned long iflags2, _Complex float* dst, const _Complex float* src1, const _Complex float* src2);

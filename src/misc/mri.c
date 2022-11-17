@@ -59,7 +59,7 @@ void data_consistency(const long dims[DIMS], complex float* dst, const complex f
 
 
 
-void estimate_pattern(int D, const long dims[D], long flags, complex float* pattern, const complex float* kspace_data)
+void estimate_pattern(int D, const long dims[D], unsigned long flags, complex float* pattern, const complex float* kspace_data)
 {
 	md_zrss(D, dims, flags, pattern, kspace_data);
 
@@ -264,7 +264,7 @@ void estimate_im_dims(int N, unsigned long flags, long dims[N], const long tdims
 /**
  * Estimate fast square image dimensions from trajectory
  */
-void estimate_fast_sq_im_dims(unsigned int N, long dims[3], const long tdims[N], const complex float* traj)
+void estimate_fast_sq_im_dims(int N, long dims[3], const long tdims[N], const complex float* traj)
 {
 	float max_dims[3] = { 0., 0., 0. };
 
@@ -334,7 +334,7 @@ float traj_radial_dcshift(const long tdims[DIMS], const complex float* traj)
 
 	NESTED(float, dist, (int i))
 	{
-		return sqrtf(powf(crealf(traj1[3 * i + 0]), 2.) + pow(crealf(traj1[3 * i + 1]), 2.));
+		return sqrtf(powf(crealf(traj1[3 * i + 0]), 2.) + powf(crealf(traj1[3 * i + 1]), 2.));
 	};
 
 	float dc_shift = dist(0);
@@ -361,7 +361,7 @@ float traj_radial_dk(const long tdims[DIMS], const complex float* traj)
 
 	NESTED(float, dist, (int i))
 	{
-		return sqrtf(powf(crealf(traj1[3 * i + 0]), 2.) + pow(crealf(traj1[3 * i + 1]), 2.));
+		return sqrtf(powf(crealf(traj1[3 * i + 0]), 2.) + powf(crealf(traj1[3 * i + 1]), 2.));
 	};
 
 	float dc_shift = dist(0);
